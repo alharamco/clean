@@ -1,0 +1,26 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.alharam.answer'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.alharam.answer'
+        minSdk 26
+        targetSdk 35
+        // GitHub Actions supplies an increasing versionCode for each build.
+        // Local builds fall back to 1.
+        def configuredVersionCode = System.getenv('VERSION_CODE')?.trim()
+        versionCode = configuredVersionCode ? configuredVersionCode.toInteger() : 1
+
+        def configuredVersionName = System.getenv('VERSION_NAME')?.trim()
+        versionName = configuredVersionName ? configuredVersionName : '1.0'
+    }
+
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}

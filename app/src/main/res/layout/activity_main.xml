@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="@color/app_bg"
+    android:paddingLeft="8dp" android:paddingRight="8dp">
+
+    <ScrollView android:id="@+id/controlScroll" android:layout_width="match_parent"
+        android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true">
+      <LinearLayout android:id="@+id/controlRoot" android:layout_width="match_parent"
+          android:layout_height="wrap_content" android:orientation="vertical"
+          android:paddingTop="8dp" android:paddingBottom="10dp">
+
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/app_header" android:textSize="22sp" android:textStyle="bold"
+            android:gravity="center" android:textColor="@color/text_primary" android:paddingBottom="2dp"/>
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/app_tagline"
+            android:textSize="12sp" android:gravity="center" android:textColor="@color/text_secondary"
+            android:paddingBottom="9dp"/>
+
+        <!-- SHARED SETTINGS -->
+        <LinearLayout android:id="@+id/sharedSection" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:orientation="vertical"
+            android:background="@drawable/bg_card" android:padding="12dp" android:layout_marginBottom="8dp">
+          <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+              android:text="⚙ إعدادات التشغيل المشتركة" android:textSize="16sp" android:textStyle="bold"
+              android:textColor="@color/text_primary" android:paddingBottom="8dp"/>
+          <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+              android:text="رابط المنشور" android:textSize="12sp" android:textStyle="bold" android:textColor="@color/text_secondary"/>
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+              android:orientation="horizontal" android:layout_marginTop="4dp" android:layoutDirection="ltr">
+            <EditText android:id="@+id/shared_url" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1"
+                android:background="@drawable/bg_input" android:hint="ألصق رابط المنشور هنا" android:singleLine="true"
+                android:inputType="textUri" android:paddingLeft="12dp" android:paddingRight="12dp"/>
+            <Button android:id="@+id/shared_open" android:layout_width="112dp" android:layout_height="48dp"
+                android:layout_marginLeft="6dp" android:background="@drawable/bg_primary_button" android:text="فتح المنشور"
+                android:textColor="#FFFFFF" android:textStyle="bold" android:textSize="12sp"/>
+          </LinearLayout>
+
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="9dp">
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:layout_marginRight="4dp">
+              <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="عدد العمليات" android:textSize="12sp" android:textStyle="bold" android:textColor="@color/text_secondary"/>
+              <com.alharam.answer.StepperView android:id="@+id/shared_count" android:layout_width="match_parent" android:layout_height="58dp" android:layout_marginTop="4dp"/>
+            </LinearLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:layout_marginLeft="4dp">
+              <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="الفاصل الزمني (ثانية)" android:textSize="12sp" android:textStyle="bold" android:textColor="@color/text_secondary"/>
+              <com.alharam.answer.StepperView android:id="@+id/shared_delay" android:layout_width="match_parent" android:layout_height="58dp" android:layout_marginTop="4dp"/>
+            </LinearLayout>
+          </LinearLayout>
+
+          <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="وقت البدء" android:textSize="12sp" android:textStyle="bold" android:textColor="@color/text_secondary" android:paddingTop="10dp"/>
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layoutDirection="ltr" android:layout_marginTop="4dp">
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:layout_marginRight="4dp">
+              <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="الدقائق" android:gravity="center" android:textSize="11sp" android:textStyle="bold" android:textColor="@color/text_secondary"/>
+              <com.alharam.answer.StepperView android:id="@+id/shared_minute" android:layout_width="match_parent" android:layout_height="58dp" android:layout_marginTop="3dp"/>
+            </LinearLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:layout_marginLeft="2dp" android:layout_marginRight="2dp">
+              <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="الساعات" android:gravity="center" android:textSize="11sp" android:textStyle="bold" android:textColor="@color/text_secondary"/>
+              <com.alharam.answer.StepperView android:id="@+id/shared_hour" android:layout_width="match_parent" android:layout_height="58dp" android:layout_marginTop="3dp"/>
+            </LinearLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1.15" android:orientation="vertical" android:layout_marginLeft="4dp">
+              <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="الفترة" android:gravity="center" android:textSize="11sp" android:textStyle="bold" android:textColor="@color/text_secondary"/>
+              <com.alharam.answer.StepperView android:id="@+id/shared_ampm" android:layout_width="match_parent" android:layout_height="58dp" android:layout_marginTop="3dp"/>
+            </LinearLayout>
+          </LinearLayout>
+          <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="اترك وقت البدء بدون اختيار للبدء فورًا. الضغط المطوّل يسرّع التغيير." android:textSize="10sp" android:gravity="center" android:textColor="@color/text_secondary" android:paddingTop="5dp"/>
+        </LinearLayout>
+
+        <!-- REPLY -->
+        <LinearLayout android:id="@+id/replySection" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:background="@drawable/bg_card" android:padding="12dp" android:layout_marginBottom="8dp">
+          <Switch android:id="@+id/replySwitch" android:layout_width="match_parent" android:layout_height="48dp" android:text="💬  الرد على التعليقات" android:textStyle="bold" android:textSize="15sp" android:textColor="@color/text_primary" android:gravity="center_vertical" android:showText="false"/>
+          <LinearLayout android:id="@+id/replyPanel" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="6dp">
+            <TextView android:id="@+id/reply_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="جاهز" android:textSize="13sp" android:textColor="@color/text_secondary" android:paddingBottom="5dp"/>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="نص الرد" android:textStyle="bold" android:textSize="12sp" android:textColor="@color/text_secondary"/>
+            <EditText android:id="@+id/replyText" android:layout_width="match_parent" android:layout_height="150dp" android:layout_marginTop="4dp" android:background="@drawable/bg_input" android:hint="اكتب الرد الافتراضي، ويمكنك إضافة ردود حسب الكلمات في سطور مستقلة:&#10;سعر،كام => أهلاً {الاسم}، السعر في المحل أو اتصل بنا&#10;رد عام لباقي التعليقات" android:gravity="top|start" android:inputType="textMultiLine" android:padding="12dp"/>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="7dp">
+              <Button android:id="@+id/reply_stop" android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1" android:background="@drawable/bg_stop_button" android:text="إيقاف" android:textColor="@color/danger" android:textStyle="bold"/>
+              <Button android:id="@+id/reply_start" android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1" android:layout_marginLeft="6dp" android:background="@drawable/bg_primary_button" android:text="بدء الرد" android:textColor="#FFFFFF" android:textStyle="bold"/>
+            </LinearLayout>
+            <TextView android:id="@+id/reply_progress" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="الردود: 0 / 0" android:textStyle="bold" android:textColor="@color/text_primary" android:paddingTop="7dp"/>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="سجل الردود — أحدث العمليات أولًا" android:textSize="12sp" android:textStyle="bold" android:textColor="@color/text_secondary" android:paddingTop="7dp" android:paddingBottom="4dp"/>
+            <ScrollView android:layout_width="match_parent" android:layout_height="125dp" android:background="@drawable/bg_log"><TextView android:id="@+id/reply_log" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" android:textSize="11sp" android:textColor="@color/text_primary" android:padding="9dp"/></ScrollView>
+          </LinearLayout>
+        </LinearLayout>
+
+        <!-- LIKER -->
+        <LinearLayout android:id="@+id/likerSection" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:background="@drawable/bg_card" android:padding="12dp" android:layout_marginBottom="8dp">
+          <Switch android:id="@+id/likerSwitch" android:layout_width="match_parent" android:layout_height="48dp" android:text="👍  إعجاب التعليقات" android:textStyle="bold" android:textSize="15sp" android:textColor="@color/text_primary" android:gravity="center_vertical" android:showText="false"/>
+          <LinearLayout android:id="@+id/likerPanel" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="6dp">
+            <TextView android:id="@+id/liker_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="جاهز" android:textStyle="bold" android:textColor="@color/text_primary" android:paddingBottom="6dp"/>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="نطاق الإعجاب" android:textSize="12sp" android:textStyle="bold" android:textColor="@color/text_secondary" android:paddingBottom="2dp"/>
+            <RadioGroup android:id="@+id/liker_scope_group" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layoutDirection="rtl" android:gravity="center_vertical">
+              <RadioButton android:id="@+id/liker_scope_main" android:layout_width="0dp" android:layout_height="42dp" android:layout_weight="1" android:text="التعليقات الرئيسية فقط" android:textSize="11sp" android:checked="true"/>
+              <RadioButton android:id="@+id/liker_scope_with_replies" android:layout_width="0dp" android:layout_height="42dp" android:layout_weight="1" android:text="التعليقات الرئيسية + الردود" android:textSize="11sp"/>
+            </RadioGroup>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+              <Button android:id="@+id/liker_stop" android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1" android:background="@drawable/bg_stop_button" android:text="إيقاف" android:textColor="@color/danger" android:textStyle="bold"/>
+              <Button android:id="@+id/liker_like" android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1" android:layout_marginLeft="6dp" android:background="@drawable/bg_primary_button" android:text="بدء الإعجاب" android:textColor="#FFFFFF" android:textStyle="bold"/>
+            </LinearLayout>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="سجل الإعجابات — أحدث العمليات أولًا" android:textSize="12sp" android:textStyle="bold" android:textColor="@color/text_secondary" android:paddingTop="7dp" android:paddingBottom="4dp"/>
+            <ScrollView android:layout_width="match_parent" android:layout_height="140dp" android:background="@drawable/bg_log"><TextView android:id="@+id/liker_results" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" android:textSize="11sp" android:textColor="@color/text_primary" android:padding="9dp"/></ScrollView>
+          </LinearLayout>
+        </LinearLayout>
+
+        <!-- INVITER -->
+        <LinearLayout android:id="@+id/inviterSection" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:background="@drawable/bg_card" android:padding="12dp" android:layout_marginBottom="8dp">
+          <Switch android:id="@+id/inviterSwitch" android:layout_width="match_parent" android:layout_height="48dp" android:text="👥  دعوة الإعجاب بالصفحة" android:textStyle="bold" android:textSize="15sp" android:textColor="@color/text_primary" android:gravity="center_vertical" android:showText="false"/>
+          <LinearLayout android:id="@+id/inviterPanel" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="6dp">
+            <TextView android:id="@+id/inviter_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="جاهز" android:textStyle="bold" android:textColor="@color/text_primary" android:paddingBottom="6dp"/>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+              <Button android:id="@+id/inviter_stop" android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1" android:background="@drawable/bg_stop_button" android:text="إيقاف" android:textColor="@color/danger" android:textStyle="bold"/>
+              <Button android:id="@+id/inviter_start" android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1" android:layout_marginLeft="6dp" android:background="@drawable/bg_primary_button" android:text="بدء الدعوات" android:textColor="#FFFFFF" android:textStyle="bold"/>
+            </LinearLayout>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="سجل الدعوات — أحدث العمليات أولًا" android:textSize="12sp" android:textStyle="bold" android:textColor="@color/text_secondary" android:paddingTop="7dp" android:paddingBottom="4dp"/>
+            <ScrollView android:id="@+id/inviter_logScroll" android:layout_width="match_parent" android:layout_height="125dp" android:background="@drawable/bg_log"><TextView android:id="@+id/inviter_log" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" android:textSize="11sp" android:textColor="@color/text_primary" android:padding="9dp"/></ScrollView>
+          </LinearLayout>
+        </LinearLayout>
+
+        <Button android:id="@+id/exitApp" android:layout_width="match_parent" android:layout_height="44dp" android:layout_marginTop="1dp" android:background="@drawable/bg_stop_button" android:text="إغلاق التطبيق" android:textColor="@color/danger" android:textStyle="bold"/>
+      </LinearLayout>
+    </ScrollView>
+
+    <TextView android:id="@+id/resizeHandle" android:layout_width="match_parent" android:layout_height="38dp" android:gravity="center" android:text="↕  اسحب لتغيير ارتفاع Facebook أو اضغط للتكبير  ↕" android:textSize="12sp" android:textStyle="bold" android:textColor="@color/text_secondary" android:background="@drawable/bg_handle" android:clickable="true" android:focusable="true"/>
+    <FrameLayout android:id="@+id/webContainer" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1.3" android:minHeight="180dp">
+      <WebView android:id="@+id/web" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#FFFFFF" android:overScrollMode="always"/>
+      <LinearLayout android:id="@+id/replyLiveLogOverlay" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_gravity="top" android:orientation="vertical" android:background="@drawable/bg_log" android:paddingLeft="10dp" android:paddingRight="10dp" android:paddingTop="5dp" android:paddingBottom="5dp" android:visibility="gone" android:elevation="12dp">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="السجل — آخر عملية" android:textSize="11sp" android:textStyle="bold" android:textColor="@color/text_secondary"/>
+        <TextView android:id="@+id/replyLiveLog" android:layout_width="match_parent" android:layout_height="38dp" android:maxLines="2" android:ellipsize="end" android:gravity="center_vertical" android:textSize="11sp" android:textColor="@color/text_primary"/>
+      </LinearLayout>
+      <Button android:id="@+id/fullscreenButton" android:layout_width="wrap_content" android:layout_height="44dp" android:layout_gravity="top|end" android:layout_margin="8dp" android:text="تصغير Facebook" android:textSize="12sp" android:textStyle="bold" android:textColor="#FFFFFF" android:background="@drawable/bg_primary_button" android:visibility="gone" android:stateListAnimator="@null"/>
+    </FrameLayout>
+</LinearLayout>
