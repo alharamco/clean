@@ -23,7 +23,7 @@ import org.json.JSONTokener;
 class ReplyController {
     interface Host { void expandFacebook(String reason); void restoreFacebook(); void toggleFacebook(); void enterReplyFocusMode(); void exitReplyFocusMode(); void updateReplyLiveLog(String message); }
     final Activity activity; final View panel; final WebView web; final Host host;
-    TextView status, log, progress; EditText replyText, replyRules, replyFallback; CheckBox replyAll; String currentRules="", currentFallback=""; StepperView sharedCount, sharedDelay;
+    TextView status, log, progress; EditText replyText, replyRules, replyFallback, replyDm, replyDmMax; CheckBox replyAll, replyDmEnable; String currentRules="", currentFallback=""; StepperView sharedCount, sharedDelay;
     Button startReply, stopReply, openPost;
     Handler handler = new Handler(); Runnable nextTask; boolean running=false;
     int completed=0,target=0,candidateIndex=0,scrollSearchAttempts=0;
@@ -34,7 +34,7 @@ class ReplyController {
     @SuppressLint("SetJavaScriptEnabled") ReplyController(Activity a, View p, WebView w, Host h) {
         activity=a; panel=p; web=w; host=h;
         status=p.findViewById(R.id.reply_status); log=p.findViewById(R.id.reply_log); progress=p.findViewById(R.id.reply_progress);
-        replyText=p.findViewById(R.id.replyText); replyRules=p.findViewById(R.id.replyRules); replyFallback=p.findViewById(R.id.replyFallback); replyAll=p.findViewById(R.id.replyAll); loadReplySettings(); startReply=p.findViewById(R.id.reply_start); stopReply=p.findViewById(R.id.reply_stop);
+        replyText=p.findViewById(R.id.replyText); replyRules=p.findViewById(R.id.replyRules); replyFallback=p.findViewById(R.id.replyFallback); replyAll=p.findViewById(R.id.replyAll); replyDm=p.findViewById(R.id.replyDm); replyDmEnable=p.findViewById(R.id.replyDmEnable); replyDmMax=p.findViewById(R.id.replyDmMax); loadReplySettings(); startReply=p.findViewById(R.id.reply_start); stopReply=p.findViewById(R.id.reply_stop);
         sharedCount=a.findViewById(R.id.shared_count); sharedDelay=a.findViewById(R.id.shared_delay);
         log.setMovementMethod(new ScrollingMovementMethod());
         startReply.setOnClickListener(v->beginReplyRun()); stopReply.setOnClickListener(v->stopRun("تم إيقاف الردود"));
@@ -71,6 +71,9 @@ class ReplyController {
         replyRules.setText(sp.getString("reply_rules", ""));
         replyFallback.setText(sp.getString("reply_fallback", ""));
         replyAll.setChecked(sp.getBoolean("reply_all", true));
+        replyDm.setText(sp.getString("reply_dm", ""));
+        replyDmEnable.setChecked(sp.getBoolean("reply_dm_on", false));
+        replyDmMax.setText(String.valueOf(sp.getInt("reply_dm_max", 20)));
     }
 
     void saveReplySettings() {
@@ -78,6 +81,9 @@ class ReplyController {
             .putString("reply_general", replyText.getText().toString())
             .putString("reply_rules", replyRules.getText().toString())
             .putString("reply_fallback", replyFallback.getText().toString())
+            .putString("reply_dm", replyDm.getText().toString())
+            .putBoolean("reply_dm_on", replyDmEnable.isChecked())
+            .putInt("reply_dm_max", dmMax)
             .putBoolean("reply_all", replyAll.isChecked()).apply();
     }
 
@@ -86,6 +92,10 @@ class ReplyController {
         currentRules = replyRules.getText().toString().trim();
         currentFallback = replyFallback.getText().toString().trim();
         if (currentReplyText.length() == 0 && currentRules.length() == 0 && currentFallback.length() == 0) { setStatus("اكتب رداً واحداً على الأقل (عام أو بالكلمات أو للعملاء غير المطابقين)"); return; }
+        currentDmText = replyDm.getText().toString().trim();
+        dmEnabled = replyDmEnable.isChecked() && currentDmText.length() > 0;
+        try { dmMax = Math.max(1, Integer.parseInt(replyDmMax.getText().toString().trim())); } catch (Exception e) { dmMax = 20; }
+        if (replyDmEnable.isChecked() && currentDmText.length() == 0) appendLog("الرسائل الخاصة مفعّلة لكن نصها فارغ — لن تُرسل رسائل خاصة");
         saveReplySettings();
         try { intervalMs = Math.max(1000L, sharedDelay.getNumericValue() * 1000L); } catch (Exception e) { intervalMs = 10000L; }
         try { target = Math.max(1, sharedCount.getNumericValue()); } catch (Exception e) { target = 10; }
@@ -100,10 +110,10 @@ class ReplyController {
     }
 
     void startReplyNow() {
-        running=true; completed=0; candidateIndex=0; scrollSearchAttempts=0; processedCandidateKeys.clear();
+        running=true; completed=0; candidateIndex=0; scrollSearchAttempts=0; processedCandidateKeys.clear(); pendingDm=false; dmNavigated=false; dmSent=0; dmLimitLogged=false; unchangedStreak=0; dmDoneAuthors.clear();
         currentCandidateKey=""; currentCandidateLabel=""; updateProgress();
         host.enterReplyFocusMode();
-        appendLog("بدأ التشغيل — المطلوب: "+target+" رد — الفاصل: "+(intervalMs/1000)+" ثانية");
+        appendLog("بدأ التشغيل — المطلوب: "+(target == Integer.MAX_VALUE ? "كل التعليقات" : String.valueOf(target))+" — الفاصل: "+(intervalMs/1000)+" ثانية"+(dmEnabled ? " — الرسائل الخاصة: مفعّلة (حد "+dmMax+")" : ""));
         // لا نعيد الواجهة للحجم الطبيعي هنا؛ Facebook يبقى مكبرًا أثناء البحث والتمرير والرد.
         scheduleNext(900);
     }
@@ -132,7 +142,7 @@ class ReplyController {
             try {
                 JSONObject o = new JSONObject(result);
                 if (!o.optBoolean("ok", false)) {
-                    if (scrollSearchAttempts < 12) {
+                    if (scrollSearchAttempts < maxScrollAttempts()) {
                         scrollSearchAttempts++;
                         handler.postDelayed(() -> {
                             if (!running) return;
@@ -145,9 +155,10 @@ class ReplyController {
                                     if (!running) return;
                                     web.evaluateJavascript(getCommentsScrollSignatureJs(), afterValue -> {
                                         String after = unquote(afterValue);
-                                        if (before.equals(after)) {
-                                            stopRun("انتهت التعليقات الظاهرة في صفحة الكومنتات — تم إيقاف التشغيل");
+                                        if (before.equals(after) && ++unchangedStreak >= 3) {
+                                            stopRun("تم الوصول إلى آخر التعليقات — تم إيقاف التشغيل (عدد الردود: " + completed + ")");
                                         } else {
+                                            if (!before.equals(after)) unchangedStreak = 0;
                                             handler.postDelayed(() -> processNextComment(), 500);
                                         }
                                     });
@@ -160,10 +171,12 @@ class ReplyController {
                     return;
                 }
 
-                scrollSearchAttempts = 0;
+                scrollSearchAttempts = 0; unchangedStreak = 0;
                 currentCandidateKey = o.optString("key", "");
                 currentCandidateLabel = o.optString("author", "");
                 currentCommentText = o.optString("text", "");
+                { String t = currentCommentText.length() > 40 ? currentCommentText.substring(0, 40) + "…" : currentCommentText;
+                  appendLog("وُجد تعليق: " + currentCandidateLabel + " | " + t); }
                 double xCss = o.optDouble("x", -1);
                 double yCss = o.optDouble("y", -1);
                 if (xCss < 0 || yCss < 0) {
@@ -183,7 +196,7 @@ class ReplyController {
                 }, 350);
             } catch (Exception e) {
                 appendLog("تعذر قراءة نتيجة البحث: " + e.getMessage());
-                if (scrollSearchAttempts < 12) {
+                if (scrollSearchAttempts < maxScrollAttempts()) {
                     scrollSearchAttempts++;
                     handler.postDelayed(() -> {
                         if (!running) return;
@@ -196,11 +209,12 @@ class ReplyController {
                                 if (!running) return;
                                 web.evaluateJavascript(getCommentsScrollSignatureJs(), afterValue -> {
                                     String after = unquote(afterValue);
-                                    if (before.equals(after)) {
-                                        stopRun("انتهت التعليقات الظاهرة في صفحة الكومنتات — تم إيقاف التشغيل");
-                                    } else {
-                                        handler.postDelayed(() -> processNextComment(), 500);
-                                    }
+                                    if (before.equals(after) && ++unchangedStreak >= 3) {
+                                            stopRun("تم الوصول إلى آخر التعليقات — تم إيقاف التشغيل (عدد الردود: " + completed + ")");
+                                        } else {
+                                            if (!before.equals(after)) unchangedStreak = 0;
+                                            handler.postDelayed(() -> processNextComment(), 500);
+                                        }
                                 });
                             }, 1500);
                         });
@@ -274,6 +288,7 @@ class ReplyController {
                         processedCandidateKeys.add(currentCandidateKey);
                     }
                     completed++;
+                    pendingDm = true;
                     candidateIndex = completed;
                     updateProgress();
                     if (completed >= target) {
@@ -427,11 +442,10 @@ class ReplyController {
                 // ننتظر حتى تستقر حركة القائمة قبل لمس أي Reply.
                 handler.postDelayed(() -> {
                     if (!running) return;
-                    scrollSearchAttempts = 0;
-                    processNextComment();
+                    afterListRestored();
                 }, positioned ? 900 : 1300);
             } catch (Exception e) {
-                handler.postDelayed(() -> processNextComment(), 1200);
+                handler.postDelayed(() -> afterListRestored(), 1200);
             }
         });
     }
@@ -486,16 +500,26 @@ class ReplyController {
         }
     }
 
-    // دوال JavaScript مشتركة: التعرف على زر Reply الحقيقي فقط، وبناء مفتاح ثابت للتعليق
-    // (صاحب التعليق + بداية نص التعليق بدون الأرقام) لا يتغير بعد إرسال ردنا.
+    // ===== دوال JavaScript مشتركة =====
+    // الفكرة: نبحث عن أزرار Reply الحقيقية (نص أو وصف مطابق تماماً)، ثم نعتبر "التعليق" هو أكبر حاوية
+    // تحتوي زر Reply واحداً فقط. اسم العميل من أول رابط داخل الحاوية (أو أول سطر)، ولا نعتمد على أي
+    // روابط خارج التعليق (مثل شريط "استخدام تطبيق فيسبوك").
     static final String COMMON_JS =
         "const norm=s=>(s||'').replace(/\\s+/g,' ').trim();" +
         "const strip=s=>norm(s).toLowerCase().replace(/[0-9٠-٩]+/g,'').replace(/[^\\p{L}]+/gu,' ').replace(/\\s+/g,' ').trim();" +
-        "const skipLink=/^(like|reply|share|edit|react|translate|see translation|أعجبني|رد|الرد|مشاركة|تعديل|ترجمة|عرض الترجمة)$/i;" +
         "const replyExact=['reply','رد','الرد','ردّ','الردّ'];" +
         "const isReply=e=>{const t=norm(e.innerText).toLowerCase(),a=norm(e.getAttribute('aria-label')).toLowerCase();return replyExact.includes(t)||replyExact.includes(a)||/^(reply to|الرد على|رد على)/.test(a);};" +
-        "const info=reply=>{let p=reply.parentElement;for(let i=0;i<12&&p;i++,p=p.parentElement){const links=[...p.querySelectorAll('a[href]')].filter(a=>{const t=norm(a.innerText);return t.length>1&&!skipLink.test(t)&&!/^[0-9٠-٩]+\\s*\\S{0,6}$/.test(t);});" +
-        "if(links.length){const l=links[0];const profileKey=(l.getAttribute('href')||'').split('?')[0];const author=norm(l.innerText);const whole=norm(p.innerText).slice(0,600);const body=whole.startsWith(author)?whole.slice(author.length).trim():whole;return {profileKey:profileKey,author:author,text:body,key:profileKey+'|'+strip(whole).slice(0,100)};}}return null;};";
+        "const inBanner=e=>!!e.closest('[role=banner],header,[role=navigation]');" +
+        "const clickable=e=>!!e.closest('a,button,[role=button],[role=link],[tabindex]')||getComputedStyle(e).cursor==='pointer';" +
+        "const collect=()=>{const raw=[...document.querySelectorAll('button,[role=button],[role=link],a,[aria-label],div[tabindex],span')].filter(e=>isReply(e)&&!inBanner(e)&&clickable(e));return raw.filter(e=>!raw.some(o=>o!==e&&o.contains(e)));};" +
+        "const containerOf=(reply,all)=>{let best=reply.parentElement||reply,p=best;while(p&&p.parentElement){const up=p.parentElement;if(up===document.body||up===document.documentElement)break;const n=all.filter(r=>up.contains(r)).length;if(n>1||norm(up.innerText).length>500||up.getBoundingClientRect().height>650)break;p=up;best=up;}return best;};" +
+        "const actionRe=/^(like|reply|share|edit|react|translate|see translation|top fan|author|admin|just now|view .*|[0-9]+ repl.*|أعجبني|إعجاب|رد|الرد|مشاركة|تعديل|ترجمة|عرض .*|معجب.*|مشرف|المسؤول|الآن)$/i;" +
+        "const timeRe=/^[0-9٠-٩]+\\s*\\S{0,8}$/;" +
+        "const info=(reply,all)=>{const c=containerOf(reply,all);const lines=(c.innerText||'').split('\\n').map(norm).filter(x=>x.length);if(!lines.length)return null;" +
+        "const al=[...c.querySelectorAll('a[href],[role=link]')].find(a=>{const t=norm(a.innerText);return t.length>1&&t.length<60&&!actionRe.test(t)&&!timeRe.test(t)&&!isReply(a);});" +
+        "const author=(al?norm(al.innerText):lines[0]).slice(0,60);" +
+        "const body=lines.filter(l=>l!==author&&!actionRe.test(l)&&!timeRe.test(l)).join(' ').replace(/(?:\\s+(?:like|reply|أعجبني|إعجاب|الرد|رد))+(?:\\s+[0-9٠-٩]+\\s*\\S{0,6})?\\s*$/i,'').slice(0,400);" +
+        "return {container:c,authorEl:al||null,author:author,text:body,key:strip(author)+'|'+strip(body).slice(0,60)};};";
 
     String findAndOpenReplyJs() {
         JSONArray done = new JSONArray();
@@ -503,19 +527,16 @@ class ReplyController {
         String qDone = JSONObject.quote(done.toString());
         String qOwn = JSONObject.quote(ownFragmentsJson());
         return "(()=>{const doneSet=new Set(JSON.parse(" + qDone + "));const own=JSON.parse(" + qOwn + ");" + COMMON_JS +
-        "const all=[...document.querySelectorAll('button,[role=button],[role=link],a,[aria-label],div[tabindex]')].filter(isReply);" +
-        "const unique=[];const seen=new Set();for(const e of all){const r=e.getBoundingClientRect();const k=Math.round(r.left/4)+'|'+Math.round(r.top/4)+'|'+Math.round(r.width/4)+'|'+Math.round(r.height/4);if(!seen.has(k)){seen.add(k);unique.push(e);}}" +
-        "unique.sort((a,b)=>{const ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();return ra.top-rb.top||ra.left-rb.left});" +
-        "for(const reply of unique){const i=info(reply);if(!i)continue;if(i.key.length<4||doneSet.has(i.key))continue;const low=i.text.toLowerCase();if(own.some(f=>low.includes(f)))continue;" +
+        "const all=collect();all.sort((a,b)=>{const ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();return ra.top-rb.top||ra.left-rb.left});" +
+        "for(const reply of all){const i=info(reply,all);if(!i||i.key.length<3||doneSet.has(i.key))continue;const low=(i.author+' '+i.text).toLowerCase();if(own.some(f=>low.includes(f)))continue;" +
         "reply.scrollIntoView({block:'center',inline:'center',behavior:'auto'});const rr=reply.getBoundingClientRect();return JSON.stringify({ok:true,message:'تم العثور على Reply جديد',x:rr.left+rr.width/2,y:rr.top+rr.height/2,w:rr.width,h:rr.height,key:i.key,author:i.author,text:i.text});}" +
-        "return JSON.stringify({ok:false,message:'لم يظهر Reply جديد في قائمة التعليقات الحالية',visibleReplies:unique.length});})()";
+        "return JSON.stringify({ok:false,message:'لم يظهر Reply جديد في قائمة التعليقات الحالية',visibleReplies:all.length});})()";
     }
 
     String restoreCommentPositionJs(String lastKey) {
         String qKey = JSONObject.quote(lastKey == null ? "" : lastKey);
         return "(()=>{const target=" + qKey + ";" + COMMON_JS +
-        "const all=[...document.querySelectorAll('button,[role=button],[role=link],a,[aria-label],div[tabindex]')].filter(isReply);" +
-        "let match=null;for(const reply of all){const i=info(reply);if(i&&target&&i.key===target){match=reply;break;}}" +
+        "const all=collect();let match=null;for(const reply of all){const i=info(reply,all);if(i&&target&&i.key===target){match=reply;break;}}" +
         "if(!match)return JSON.stringify({positioned:false,reason:'لم يتم العثور على آخر تعليق تم الرد عليه في DOM الحالي'});" +
         "let sc=null;let p=match;for(let i=0;i<14&&p;i++,p=p.parentElement){const cs=getComputedStyle(p);if(p.scrollHeight>p.clientHeight+30&&/(auto|scroll)/.test(cs.overflowY)){sc=p;break;}}" +
         "if(!sc){p=match;for(let i=0;i<14&&p;i++,p=p.parentElement){if(p.scrollHeight>p.clientHeight+30){sc=p;break;}}}" +
@@ -523,13 +544,63 @@ class ReplyController {
         "return JSON.stringify({positioned:true});})()";
     }
 
+    // اسم العميل داخل تعليقه (للضغط عليه وفتح صفحته)
+    String findAuthorLinkJs(String key) {
+        String qKey = JSONObject.quote(key == null ? "" : key);
+        return "(()=>{const target=" + qKey + ";" + COMMON_JS +
+        "const all=collect();let hit=null;for(const r of all){const i=info(r,all);if(i&&i.key===target){hit=i;break;}}" +
+        "if(!hit||!hit.authorEl)return JSON.stringify({ok:false,message:'لم يتم العثور على رابط اسم العميل'});" +
+        "hit.authorEl.scrollIntoView({block:'center',inline:'center',behavior:'auto'});const r=hit.authorEl.getBoundingClientRect();" +
+        "return JSON.stringify({ok:true,x:r.left+r.width/2,y:r.top+r.height/2,url:location.href});})()";
+    }
+
+    // زر المراسلة في صفحة العميل (عربي وإنجليزي)، مع تجاهل شريط فيسبوك العلوي حتى لا نفتح صندوق رسائلك.
+    String findMessageButtonJs() {
+        return "(()=>{const norm=s=>(s||'').replace(/\\s+/g,' ').trim().toLowerCase();" +
+        "const visible=e=>{const r=e.getBoundingClientRect(),st=getComputedStyle(e);return r.width>0&&r.height>0&&st.display!=='none'&&st.visibility!=='hidden';};" +
+        "const words=['message','send message','send a message','new message','message us','مراسلة','رسالة','رسالة جديدة','إرسال رسالة','ارسال رسالة','راسلني','مراسلته','مراسلتها'];" +
+        "const bad=e=>!!e.closest('[role=banner],header,[role=navigation],[role=complementary]');" +
+        "const els=[...document.querySelectorAll('a,button,[role=button],[role=link],div[tabindex],span')].filter(e=>visible(e)&&!bad(e));" +
+        "let best=null,score=-1;for(const e of els){const t=norm(e.innerText),a=norm(e.getAttribute('aria-label'));let s=0;if(words.includes(t))s=3;else if(words.includes(a))s=2;else continue;" +
+        "if(e.tagName==='SPAN'&&!e.closest('a,button,[role=button],[role=link],[tabindex]'))continue;if(s>score){score=s;best=e;}}" +
+        "if(!best)return JSON.stringify({ok:false,message:'لا يوجد زر مراسلة'});" +
+        "best.scrollIntoView({block:'center',inline:'center',behavior:'auto'});const r=best.getBoundingClientRect();" +
+        "return JSON.stringify({ok:true,x:r.left+r.width/2,y:r.top+r.height/2,label:norm(best.innerText||best.getAttribute('aria-label'))});})()";
+    }
+
+    // كتابة الرسالة الخاصة وإرسالها (زر الإرسال أو Enter)
+    String fillAndSendDmJs(String text) {
+        String q = JSONObject.quote(text);
+        return "(()=>{const text=" + q + ";const norm=s=>(s||'').replace(/\\s+/g,' ').trim().toLowerCase();" +
+        "const visible=e=>{const r=e.getBoundingClientRect(),st=getComputedStyle(e);return r.width>0&&r.height>0&&st.display!=='none'&&st.visibility!=='hidden';};" +
+        "const bad=e=>!!e.closest('[role=banner],header,[role=navigation]');" +
+        "const boxes=[...document.querySelectorAll('textarea,[contenteditable=true],[role=textbox]')].filter(e=>visible(e)&&!bad(e));" +
+        "const hint=e=>{const s=norm((e.getAttribute('aria-label')||'')+' '+(e.getAttribute('placeholder')||'')+' '+(e.getAttribute('data-placeholder')||''));return /message|رسالة|aa|اكتب/.test(s);};" +
+        "let box=boxes.find(hint)||boxes[boxes.length-1];" +
+        "if(!box)return JSON.stringify({ok:false,message:'لم تظهر خانة كتابة الرسالة'});" +
+        "box.scrollIntoView({block:'center',inline:'center'});box.focus();" +
+        "if(box.tagName==='TEXTAREA'){const p=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value');if(p&&p.set)p.set.call(box,text);else box.value=text;}else{const r=document.createRange();r.selectNodeContents(box);r.deleteContents();r.insertNode(document.createTextNode(text));}" +
+        "box.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));box.dispatchEvent(new Event('change',{bubbles:true}));" +
+        "const scope=box.closest('form,[role=dialog],[aria-modal=true]')||box.parentElement?.parentElement?.parentElement||document;" +
+        "const send=[...scope.querySelectorAll('button,[role=button],[aria-label]')].filter(visible).find(e=>{const t=norm(e.innerText),a=norm(e.getAttribute('aria-label'));return ['send','إرسال','ارسال','press enter to send','send message'].some(x=>t===x||a===x);});" +
+        "if(send){send.click();return JSON.stringify({ok:true,via:'button'});}" +
+        "for(const t of ['keydown','keypress','keyup']){box.dispatchEvent(new KeyboardEvent(t,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));}" +
+        "return JSON.stringify({ok:true,via:'enter'});})()";
+    }
+
+    String dmStillTypedJs(String text) {
+        String q = JSONObject.quote(text.length() > 12 ? text.substring(0, 12) : text);
+        return "(()=>{const t=" + q + ";const b=[...document.querySelectorAll('textarea,[contenteditable=true],[role=textbox]')].find(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;});" +
+        "return JSON.stringify({still:!!b&&(((b.value||b.innerText||'')+'').includes(t))});})()";
+    }
+
     String scrollCommentsListJs() {
         return "(()=>{const vis=e=>{if(!e)return false;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'&&r.bottom>0&&r.top<innerHeight};"+
         "const replies=['reply','replies','رد','الرد','ردود','الردود','reply to','رد على'];let best=null,bestScore=-1;"+
         "for(const e of document.querySelectorAll('button,[role=button],[role=link],a,[aria-label],div[tabindex]')){if(!vis(e))continue;const t=((e.innerText||'')+' '+(e.getAttribute('aria-label')||'')).toLowerCase();if(!replies.some(x=>t.includes(x)))continue;let p=e;for(let i=0;i<14&&p;i++,p=p.parentElement){if(p.scrollHeight>p.clientHeight+40){const r=p.getBoundingClientRect();let score=0;if(r.height>250)score+=500;if(r.width>250)score+=150;if(r.top<innerHeight&&r.bottom>0)score+=150;if(r.height>r.width*0.45)score+=100;if(score>bestScore){bestScore=score;best=p;}}}}"+
         "if(!best){for(const e of document.querySelectorAll('div,section,main,[role=dialog],[role=feed],[role=main]')){if(!vis(e)||e.scrollHeight<=e.clientHeight+40)continue;const r=e.getBoundingClientRect();let score=r.height+Math.min(r.width,500);if(r.top<innerHeight&&r.bottom>0&&score>bestScore){bestScore=score;best=e;}}}"+
-        "if(!best){window.scrollBy({top:Math.round(innerHeight*0.24),behavior:'auto'});return JSON.stringify({ok:true,mode:'window'});}"+
-        "const max=Math.max(0,best.scrollHeight-best.clientHeight);const step=Math.max(100,Math.min(best.clientHeight*0.24,300));const old=best.scrollTop;best.scrollTop=Math.min(max,old+step);best.dispatchEvent(new Event('scroll',{bubbles:true}));return JSON.stringify({ok:true,mode:'container',top:best.scrollTop,max:max,moved:best.scrollTop-old});})()";
+        "if(!best){window.scrollBy({top:Math.round(innerHeight*0.6),behavior:'auto'});return JSON.stringify({ok:true,mode:'window'});}"+
+        "const max=Math.max(0,best.scrollHeight-best.clientHeight);const step=Math.max(150,Math.min(best.clientHeight*0.6,700));const old=best.scrollTop;best.scrollTop=Math.min(max,old+step);best.dispatchEvent(new Event('scroll',{bubbles:true}));return JSON.stringify({ok:true,mode:'container',top:best.scrollTop,max:max,moved:best.scrollTop-old});})()";
     }
 
     String getCommentsScrollSignatureJs() {
@@ -600,6 +671,169 @@ class ReplyController {
         "if(!send)return JSON.stringify({ok:false,message:'تمت كتابة الرد في خانة Reply الصحيحة لكن لم يتم العثور على زر الإرسال داخل نفس منطقة الرد'});" +
         "send.scrollIntoView({block:'center',inline:'center'});send.click();" +
         "return JSON.stringify({ok:true,message:'تمت كتابة الرد في خانة Reply والضغط على زر الإرسال'});})()";
+    }
+
+    // ===== الرسالة الخاصة بعد الرد العام =====
+    boolean pendingDm = false, dmNavigated = false, dmEnabled = false, dmLimitLogged = false;
+    int dmSent = 0, dmMax = 20, dmBackTries = 0, unchangedStreak = 0;
+    String currentDmText = "", dmReturnUrl = "";
+    final Set<String> dmDoneAuthors = new HashSet<>();
+    final java.util.Random rnd = new java.util.Random();
+
+    int maxScrollAttempts() { return replyAll != null && replyAll.isChecked() ? 80 : 12; }
+
+    static String pathOnly(String u) {
+        if (u == null) return "";
+        int q = u.indexOf('?'); if (q >= 0) u = u.substring(0, q);
+        int h = u.indexOf('#'); if (h >= 0) u = u.substring(0, h);
+        while (u.endsWith("/")) u = u.substring(0, u.length() - 1);
+        return u;
+    }
+
+    boolean shouldSendDm() { return dmEnabled && currentDmText.length() > 0 && dmSent < dmMax; }
+
+    // بعد الرجوع من شاشة الردود: إما نبدأ الرسالة الخاصة للعميل الذي رددنا عليه، أو نكمل للتعليق التالي.
+    void afterListRestored() {
+        if (!running) return;
+        if (pendingDm) {
+            pendingDm = false;
+            if (shouldSendDm()) { startDm(); return; }
+            if (dmEnabled && dmSent >= dmMax && !dmLimitLogged) { dmLimitLogged = true; appendLog("بلغ حد الرسائل الخاصة (" + dmMax + ") — سيكمل الردود العامة فقط"); }
+        }
+        scrollSearchAttempts = 0;
+        processNextComment();
+    }
+
+    void startDm() {
+        final String author = currentCandidateLabel == null ? "" : currentCandidateLabel.trim();
+        final String key = currentCandidateKey;
+        if (author.length() == 0 || dmDoneAuthors.contains(author.toLowerCase())) {
+            appendLog("تخطي الرسالة الخاصة — لا يوجد اسم للعميل أو سبقت مراسلته");
+            dmAfter(500); return;
+        }
+        dmNavigated = false;
+        setStatus("جاري فتح صفحة " + author + " للمراسلة");
+        web.evaluateJavascript(findAuthorLinkJs(key), v -> {
+            if (!running) return;
+            try {
+                final JSONObject o = new JSONObject(unquote(v));
+                if (!o.optBoolean("ok", false)) { dmSkip(author, o.optString("message", "تعذر الوصول لاسم العميل")); return; }
+                dmReturnUrl = o.optString("url", "");
+                if (dmReturnUrl.length() == 0) { dmSkip(author, "تعذر قراءة رابط الصفحة الحالي"); return; }
+                handler.postDelayed(() -> {
+                    if (!running) return;
+                    if (!nativeTapWebView(o.optDouble("x", -1), o.optDouble("y", -1))) { dmSkip(author, "تعذر الضغط على اسم العميل"); return; }
+                    handler.postDelayed(() -> dmCheckProfile(author, 0), 3200);
+                }, 400);
+            } catch (Exception e) { dmSkip(author, "نتيجة غير مفهومة أثناء فتح صفحة العميل"); }
+        });
+    }
+
+    // نتأكد أن الرابط تغيّر فعلاً (أي فُتحت صفحة العميل) قبل البحث عن زر المراسلة،
+    // حتى لا نضغط بالخطأ على زر "إرسال رسالة" الخاص بصفحة المنشور نفسها.
+    void dmCheckProfile(final String author, final int attempt) {
+        if (!running) return;
+        web.evaluateJavascript("location.href", v -> {
+            if (!running) return;
+            String url = unquote(v);
+            if (pathOnly(url).equals(pathOnly(dmReturnUrl))) {
+                if (attempt < 2) handler.postDelayed(() -> dmCheckProfile(author, attempt + 1), 1500);
+                else dmSkip(author, "لم تفتح صفحة العميل");
+                return;
+            }
+            dmNavigated = true;
+            appendLog("فُتحت صفحة: " + url);
+            dmFindMessage(author, 0);
+        });
+    }
+
+    void dmFindMessage(final String author, final int attempt) {
+        if (!running) return;
+        web.evaluateJavascript(findMessageButtonJs(), v -> {
+            if (!running) return;
+            try {
+                JSONObject o = new JSONObject(unquote(v));
+                if (o.optBoolean("ok", false)) {
+                    final double x = o.optDouble("x", -1), y = o.optDouble("y", -1);
+                    appendLog("وُجد زر المراسلة: " + o.optString("label", ""));
+                    handler.postDelayed(() -> {
+                        if (!running) return;
+                        if (!nativeTapWebView(x, y)) { dmSkip(author, "تعذر الضغط على زر المراسلة"); return; }
+                        handler.postDelayed(() -> dmType(author, 0), 3500);
+                    }, 400);
+                    return;
+                }
+            } catch (Exception ignored) {}
+            if (attempt < 2) handler.postDelayed(() -> dmFindMessage(author, attempt + 1), 1500);
+            else dmSkip(author, "لا يوجد زر مراسلة في صفحته");
+        });
+    }
+
+    void dmType(final String author, final int attempt) {
+        if (!running) return;
+        String first = author.trim().length() > 0 ? author.trim().split("\\s+")[0] : "";
+        final String text = fillName(currentDmText, first);
+        web.evaluateJavascript(fillAndSendDmJs(text), v -> {
+            if (!running) return;
+            try {
+                JSONObject o = new JSONObject(unquote(v));
+                if (o.optBoolean("ok", false)) { handler.postDelayed(() -> dmVerify(author, text), 1600); return; }
+            } catch (Exception ignored) {}
+            if (attempt < 3) handler.postDelayed(() -> dmType(author, attempt + 1), 1500);
+            else dmSkip(author, "لم تظهر خانة الرسالة (قد يفتح فيسبوك تطبيق ماسنجر خارج التطبيق)");
+        });
+    }
+
+    void dmVerify(final String author, final String text) {
+        if (!running) return;
+        web.evaluateJavascript(dmStillTypedJs(text), v -> {
+            if (!running) return;
+            boolean still = unquote(v).contains("\"still\":true");
+            if (still) { dmSkip(author, "كُتبت الرسالة ولم تُرسل"); return; }
+            dmSent++; dmDoneAuthors.add(author.toLowerCase());
+            appendLog("تم إرسال رسالة خاصة إلى " + author + " — رقم " + dmSent);
+            dmClose(true);
+        });
+    }
+
+    void dmSkip(String author, String reason) {
+        appendLog("تخطي الرسالة الخاصة لـ " + author + " — " + reason);
+        if (dmNavigated) dmClose(false); else dmAfter(600);
+    }
+
+    void dmClose(final boolean sent) {
+        dmBackTries = 0;
+        handler.postDelayed(() -> dmGoBack(sent), 1200);
+    }
+
+    // الرجوع إلى صفحة التعليقات بنفس رابطها، مع محاولة الرجوع للخلف أولاً (يحافظ على القائمة)،
+    // ثم إعادة تحميل الرابط كحل أخير.
+    void dmGoBack(final boolean sent) {
+        if (!running) return;
+        web.evaluateJavascript("location.href", v -> {
+            if (!running) return;
+            String url = unquote(v);
+            if (pathOnly(url).equals(pathOnly(dmReturnUrl))) {
+                dmNavigated = false;
+                long extra = sent ? intervalMs + rnd.nextInt(4000) : 800;
+                dmAfter(extra);
+                return;
+            }
+            if (dmBackTries < 5) {
+                dmBackTries++;
+                if (web.canGoBack()) web.goBack(); else web.evaluateJavascript("history.back()", null);
+                handler.postDelayed(() -> dmGoBack(sent), 1800);
+            } else {
+                appendLog("تعذر الرجوع بالأزرار — إعادة تحميل صفحة التعليقات");
+                web.loadUrl(dmReturnUrl);
+                dmNavigated = false;
+                dmAfter(6000);
+            }
+        });
+    }
+
+    void dmAfter(long delayMs) {
+        handler.postDelayed(() -> { if (running) restoreCommentPositionAndContinue(); }, delayMs);
     }
 
     void stopRun(String message) {
