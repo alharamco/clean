@@ -7,7 +7,10 @@ import android.os.Handler;
 import android.os.SystemClock;
 import android.webkit.WebView;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
+import android.content.SharedPreferences;
+import org.json.JSONArray;
 import android.widget.TextView;
 import android.text.method.ScrollingMovementMethod;
 import android.view.View;
@@ -20,7 +23,7 @@ import org.json.JSONTokener;
 class ReplyController {
     interface Host { void expandFacebook(String reason); void restoreFacebook(); void toggleFacebook(); void enterReplyFocusMode(); void exitReplyFocusMode(); void updateReplyLiveLog(String message); }
     final Activity activity; final View panel; final WebView web; final Host host;
-    TextView status, log, progress; EditText replyText; StepperView sharedCount, sharedDelay;
+    TextView status, log, progress; EditText replyText, replyRules, replyFallback; CheckBox replyAll; String currentRules="", currentFallback=""; StepperView sharedCount, sharedDelay;
     Button startReply, stopReply, openPost;
     Handler handler = new Handler(); Runnable nextTask; boolean running=false;
     int completed=0,target=0,candidateIndex=0,scrollSearchAttempts=0;
@@ -31,7 +34,7 @@ class ReplyController {
     @SuppressLint("SetJavaScriptEnabled") ReplyController(Activity a, View p, WebView w, Host h) {
         activity=a; panel=p; web=w; host=h;
         status=p.findViewById(R.id.reply_status); log=p.findViewById(R.id.reply_log); progress=p.findViewById(R.id.reply_progress);
-        replyText=p.findViewById(R.id.replyText); startReply=p.findViewById(R.id.reply_start); stopReply=p.findViewById(R.id.reply_stop);
+        replyText=p.findViewById(R.id.replyText); replyRules=p.findViewById(R.id.replyRules); replyFallback=p.findViewById(R.id.replyFallback); replyAll=p.findViewById(R.id.replyAll); loadReplySettings(); startReply=p.findViewById(R.id.reply_start); stopReply=p.findViewById(R.id.reply_stop);
         sharedCount=a.findViewById(R.id.shared_count); sharedDelay=a.findViewById(R.id.shared_delay);
         log.setMovementMethod(new ScrollingMovementMethod());
         startReply.setOnClickListener(v->beginReplyRun()); stopReply.setOnClickListener(v->stopRun("تم إيقاف الردود"));
@@ -62,11 +65,31 @@ class ReplyController {
         }, 1000);
     }
 
+    void loadReplySettings() {
+        SharedPreferences sp = activity.getSharedPreferences("hub_settings", 0);
+        replyText.setText(sp.getString("reply_general", ""));
+        replyRules.setText(sp.getString("reply_rules", ""));
+        replyFallback.setText(sp.getString("reply_fallback", ""));
+        replyAll.setChecked(sp.getBoolean("reply_all", true));
+    }
+
+    void saveReplySettings() {
+        activity.getSharedPreferences("hub_settings", 0).edit()
+            .putString("reply_general", replyText.getText().toString())
+            .putString("reply_rules", replyRules.getText().toString())
+            .putString("reply_fallback", replyFallback.getText().toString())
+            .putBoolean("reply_all", replyAll.isChecked()).apply();
+    }
+
     void beginReplyRun() {
         currentReplyText = replyText.getText().toString().trim();
-        if (currentReplyText.length() == 0) { setStatus("اكتب نص الرد أولًا"); return; }
+        currentRules = replyRules.getText().toString().trim();
+        currentFallback = replyFallback.getText().toString().trim();
+        if (currentReplyText.length() == 0 && currentRules.length() == 0 && currentFallback.length() == 0) { setStatus("اكتب رداً واحداً على الأقل (عام أو بالكلمات أو للعملاء غير المطابقين)"); return; }
+        saveReplySettings();
         try { intervalMs = Math.max(1000L, sharedDelay.getNumericValue() * 1000L); } catch (Exception e) { intervalMs = 10000L; }
         try { target = Math.max(1, sharedCount.getNumericValue()); } catch (Exception e) { target = 10; }
+        if (replyAll.isChecked()) target = Integer.MAX_VALUE;
         stopRun(null);
         MainActivity ma=(MainActivity)activity; ma.saveSharedSettings();
         String selected=ma.sharedStartTime();
@@ -189,35 +212,52 @@ class ReplyController {
         });
     }
 
-    // صيغة نص الرد (كل سطر مستقل):
-    //   كلمة1،كلمة2 => نص الرد الخاص بهذه الكلمات
-    //   أي سطر بدون => هو الرد الافتراضي لباقي التعليقات
+    // الاختيارات الثلاثة:
+    //  1) الرد العام: يُرسل لكل العملاء إذا لم تُكتب ردود بالكلمات.
+    //  2) الردود بالكلمات: كل سطر  كلمة1،كلمة2 => نص الرد
+    //  3) الرد لغير المطابقين: يُرسل لمن لم تنطبق عليه أي كلمة.
     // ويمكن استخدام {الاسم} لإدراج الاسم الأول لصاحب التعليق.
     String buildReplyFor(String author, String commentText) {
         String first = "";
         if (author != null) { String a = author.trim(); if (a.length() > 0) first = a.split("\\s+")[0]; }
         String comment = commentText == null ? "" : commentText.toLowerCase();
-        StringBuilder def = new StringBuilder();
         String matched = null;
-        for (String raw : currentReplyText.split("\\r?\\n")) {
+        for (String raw : currentRules.split("\\r?\\n")) {
             String line = raw.trim();
-            if (line.length() == 0) continue;
             int idx = line.indexOf("=>");
-            if (idx > 0) {
-                if (matched != null) continue;
-                String reply = line.substring(idx + 2).trim();
-                for (String k : line.substring(0, idx).split("[,،|]")) {
-                    String key = k.trim().toLowerCase();
-                    if (key.length() > 0 && comment.contains(key)) { matched = reply; break; }
-                }
-            } else {
-                if (def.length() > 0) def.append(" ");
-                def.append(line);
+            if (idx <= 0) continue;
+            String reply = line.substring(idx + 2).trim();
+            if (reply.length() == 0) continue;
+            for (String k : line.substring(0, idx).split("[,،|]")) {
+                String key = k.trim().toLowerCase();
+                if (key.length() > 0 && comment.contains(key)) { matched = reply; break; }
+            }
+            if (matched != null) break;
+        }
+        String out;
+        if (matched != null) out = matched;
+        else if (currentRules.length() > 0) out = currentFallback.length() > 0 ? currentFallback : currentReplyText;
+        else out = currentReplyText.length() > 0 ? currentReplyText : currentFallback;
+        return fillName(out, first);
+    }
+
+    static String fillName(String t, String first) {
+        return t.replace("{الاسم}", first).replace("{name}", first).replaceAll("\\s+", " ").trim();
+    }
+
+    // أجزاء من ردودنا نفسها، حتى لا يرد التطبيق على ردوده السابقة.
+    String ownFragmentsJson() {
+        JSONArray arr = new JSONArray();
+        java.util.List<String> templates = new java.util.ArrayList<>();
+        templates.add(currentReplyText); templates.add(currentFallback);
+        for (String raw : currentRules.split("\\r?\\n")) { int i = raw.indexOf("=>"); if (i > 0) templates.add(raw.substring(i + 2)); }
+        for (String t : templates) {
+            for (String seg : t.replace("{name}", "@@@").replace("{الاسم}", "@@@").split("@@@")) {
+                String c = seg.replaceAll("\\s+", " ").trim().toLowerCase();
+                if (c.length() >= 8) arr.put(c.length() > 40 ? c.substring(0, 40) : c);
             }
         }
-        String out = matched != null ? matched : def.toString();
-        out = out.replace("{الاسم}", first).replace("{name}", first).replaceAll("\\s+", " ").trim();
-        return out;
+        return arr.toString();
     }
 
     void fillAndSendReply() {
@@ -260,6 +300,7 @@ class ReplyController {
     void handleCandidateFailure(String reason) {
         if (!running) return;
         appendLog("تم تخطي " + (currentCandidateLabel.length() > 0 ? currentCandidateLabel : "التعليق الحالي") + " — السبب: " + reason);
+        if (currentCandidateKey != null && currentCandidateKey.length() > 0) processedCandidateKeys.add(currentCandidateKey);
         candidateIndex++;
         handler.postDelayed(() -> {
             if (!running) return;
@@ -445,40 +486,36 @@ class ReplyController {
         }
     }
 
-    String findAndOpenReplyJs() {
-        StringBuilder processedBuilder = new StringBuilder("[");
-        int processedPos = 0;
-        for (String k : processedCandidateKeys) {
-            if (processedPos++ > 0) processedBuilder.append(",");
-            processedBuilder.append(JSONObject.quote(k));
-        }
-        processedBuilder.append("]");
-        String qProcessed = JSONObject.quote(processedBuilder.toString());
-        return "(()=>{const processed=" + qProcessed + ";let done=[];try{done=JSON.parse(processed);}catch(e){};const doneSet=new Set(done);" +
+    // دوال JavaScript مشتركة: التعرف على زر Reply الحقيقي فقط، وبناء مفتاح ثابت للتعليق
+    // (صاحب التعليق + بداية نص التعليق بدون الأرقام) لا يتغير بعد إرسال ردنا.
+    static final String COMMON_JS =
         "const norm=s=>(s||'').replace(/\\s+/g,' ').trim();" +
-        "const visible=e=>{if(!e)return false;const r=e.getBoundingClientRect(),st=getComputedStyle(e);return r.width>0&&r.height>0&&st.display!=='none'&&st.visibility!=='hidden'};" +
-        "const replyWords=['reply','replies','reply to','response','responses','respond','رد','الرد','ردود','الردود','الرد على','استجابة','استجابات','ردّ','الردّ'];" +
-        "const isReply=e=>{const t=norm(e.innerText).toLowerCase(),a=norm(e.getAttribute('aria-label')).toLowerCase(),p=norm(e.getAttribute('data-testid')).toLowerCase();return replyWords.some(x=>t===x||a===x||p===x||t.includes(x)||a.includes(x)||p.includes(x));};" +
-        "const selectors='button,[role=button],[role=link],a,[aria-label],div[tabindex]';" +
-        "const all=[...document.querySelectorAll(selectors)].filter(isReply);" +
-        "const unique=[];const seen=new Set();for(const e of all){const r=e.getBoundingClientRect();const key=Math.round(r.left/4)+'|'+Math.round(r.top/4)+'|'+Math.round(r.width/4)+'|'+Math.round(r.height/4);if(!seen.has(key)){seen.add(key);unique.push(e);}}" +
+        "const strip=s=>norm(s).toLowerCase().replace(/[0-9٠-٩]+/g,'').replace(/[^\\p{L}]+/gu,' ').replace(/\\s+/g,' ').trim();" +
+        "const skipLink=/^(like|reply|share|edit|react|translate|see translation|أعجبني|رد|الرد|مشاركة|تعديل|ترجمة|عرض الترجمة)$/i;" +
+        "const replyExact=['reply','رد','الرد','ردّ','الردّ'];" +
+        "const isReply=e=>{const t=norm(e.innerText).toLowerCase(),a=norm(e.getAttribute('aria-label')).toLowerCase();return replyExact.includes(t)||replyExact.includes(a)||/^(reply to|الرد على|رد على)/.test(a);};" +
+        "const info=reply=>{let p=reply.parentElement;for(let i=0;i<12&&p;i++,p=p.parentElement){const links=[...p.querySelectorAll('a[href]')].filter(a=>{const t=norm(a.innerText);return t.length>1&&!skipLink.test(t)&&!/^[0-9٠-٩]+\\s*\\S{0,6}$/.test(t);});" +
+        "if(links.length){const l=links[0];const profileKey=(l.getAttribute('href')||'').split('?')[0];const author=norm(l.innerText);const whole=norm(p.innerText).slice(0,600);const body=whole.startsWith(author)?whole.slice(author.length).trim():whole;return {profileKey:profileKey,author:author,text:body,key:profileKey+'|'+strip(whole).slice(0,100)};}}return null;};";
+
+    String findAndOpenReplyJs() {
+        JSONArray done = new JSONArray();
+        for (String k : processedCandidateKeys) done.put(k);
+        String qDone = JSONObject.quote(done.toString());
+        String qOwn = JSONObject.quote(ownFragmentsJson());
+        return "(()=>{const doneSet=new Set(JSON.parse(" + qDone + "));const own=JSON.parse(" + qOwn + ");" + COMMON_JS +
+        "const all=[...document.querySelectorAll('button,[role=button],[role=link],a,[aria-label],div[tabindex]')].filter(isReply);" +
+        "const unique=[];const seen=new Set();for(const e of all){const r=e.getBoundingClientRect();const k=Math.round(r.left/4)+'|'+Math.round(r.top/4)+'|'+Math.round(r.width/4)+'|'+Math.round(r.height/4);if(!seen.has(k)){seen.add(k);unique.push(e);}}" +
         "unique.sort((a,b)=>{const ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();return ra.top-rb.top||ra.left-rb.left});" +
-        "const clean=s=>norm(s).toLowerCase().replace(/reply|replies|reply to|response|responses|respond|ردود|الردود|الرد على|استجابات|استجابة|ردّ|الردّ/g,'').replace(/[^\\p{L}\\p{N}]+/gu,' ').trim();" +
-        "for(const reply of unique){let p=reply.parentElement,bestText='',profileKey='',author='',cText='';for(let i=0;i<12&&p;i++,p=p.parentElement){const txt=norm(p.innerText);if(txt.length>bestText.length&&txt.length<1600)bestText=txt;if(!profileKey){const link=p.querySelector('a[href]');if(link){profileKey=(link.getAttribute('href')||'').split('?')[0];author=norm(link.innerText||link.getAttribute('aria-label')||'');cText=txt.slice(0,600);}}}" +
-        "const stable=(profileKey+'|'+clean(bestText).slice(0,700)).slice(0,800);if(stable.length<4||doneSet.has(stable))continue;" +
-        // Only now bring the next unprocessed reply into view. This makes the scroll visible to the user.
-        "reply.scrollIntoView({block:'center',inline:'center',behavior:'auto'});const rr=reply.getBoundingClientRect();return JSON.stringify({ok:true,message:'تم العثور على Reply جديد',x:rr.left+rr.width/2,y:rr.top+rr.height/2,w:rr.width,h:rr.height,key:stable,author:author,text:cText});}" +
+        "for(const reply of unique){const i=info(reply);if(!i)continue;if(i.key.length<4||doneSet.has(i.key))continue;const low=i.text.toLowerCase();if(own.some(f=>low.includes(f)))continue;" +
+        "reply.scrollIntoView({block:'center',inline:'center',behavior:'auto'});const rr=reply.getBoundingClientRect();return JSON.stringify({ok:true,message:'تم العثور على Reply جديد',x:rr.left+rr.width/2,y:rr.top+rr.height/2,w:rr.width,h:rr.height,key:i.key,author:i.author,text:i.text});}" +
         "return JSON.stringify({ok:false,message:'لم يظهر Reply جديد في قائمة التعليقات الحالية',visibleReplies:unique.length});})()";
     }
 
     String restoreCommentPositionJs(String lastKey) {
         String qKey = JSONObject.quote(lastKey == null ? "" : lastKey);
-        return "(()=>{const target=" + qKey + ";const norm=s=>(s||'').replace(/\\s+/g,' ').trim();" +
-        "const clean=s=>norm(s).toLowerCase().replace(/reply|replies|reply to|response|responses|respond|ردود|الردود|الرد على|استجابات|استجابة|ردّ|الردّ/g,'').replace(/[^\\p{L}\\p{N}]+/gu,' ').trim();" +
-        "const replyWords=['reply','replies','reply to','response','responses','respond','رد','الرد','ردود','الردود','الرد على','استجابة','استجابات','ردّ','الردّ'];" +
-        "const isReply=e=>{const t=norm(e.innerText).toLowerCase(),a=norm(e.getAttribute('aria-label')).toLowerCase(),p=norm(e.getAttribute('data-testid')).toLowerCase();return replyWords.some(x=>t===x||a===x||p===x||t.includes(x)||a.includes(x)||p.includes(x));};" +
+        return "(()=>{const target=" + qKey + ";" + COMMON_JS +
         "const all=[...document.querySelectorAll('button,[role=button],[role=link],a,[aria-label],div[tabindex]')].filter(isReply);" +
-        "let match=null;for(const reply of all){let p=reply.parentElement,bestText='',profileKey='';for(let i=0;i<12&&p;i++,p=p.parentElement){const txt=norm(p.innerText);if(txt.length>bestText.length&&txt.length<1600)bestText=txt;if(!profileKey){const link=p.querySelector('a[href]');if(link)profileKey=(link.getAttribute('href')||'').split('?')[0];}}const stable=(profileKey+'|'+clean(bestText).slice(0,700)).slice(0,800);if(target && stable===target){match=reply;break;}}" +
+        "let match=null;for(const reply of all){const i=info(reply);if(i&&target&&i.key===target){match=reply;break;}}" +
         "if(!match)return JSON.stringify({positioned:false,reason:'لم يتم العثور على آخر تعليق تم الرد عليه في DOM الحالي'});" +
         "let sc=null;let p=match;for(let i=0;i<14&&p;i++,p=p.parentElement){const cs=getComputedStyle(p);if(p.scrollHeight>p.clientHeight+30&&/(auto|scroll)/.test(cs.overflowY)){sc=p;break;}}" +
         "if(!sc){p=match;for(let i=0;i<14&&p;i++,p=p.parentElement){if(p.scrollHeight>p.clientHeight+30){sc=p;break;}}}" +
@@ -579,7 +616,7 @@ class ReplyController {
         log.post(() -> log.scrollTo(0,0));
         host.updateReplyLiveLog(s);
     }
-    void updateProgress() { progress.setText("الردود: " + completed + " / " + target); }
+    void updateProgress() { progress.setText("الردود: " + completed + " / " + (target == Integer.MAX_VALUE ? "كل التعليقات" : String.valueOf(target))); }
 
     static String unquote(String s) {
         if (s == null) return "";
