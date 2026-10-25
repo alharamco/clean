@@ -2,4 +2,5 @@
     <string name="app_name">Al Haram Smart Actions for Facebook</string>
     <string name="app_tagline">Reply • Like • Invite</string>
     <string name="app_header">Al Haram Smart Actions</string>
+    <string name="accessibility_description">Lets the app type and send the private message inside Messenger after replying to a comment. The service reads nothing except while sending a message.</string>
 </resources>

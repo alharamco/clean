@@ -162,7 +162,7 @@ public class StepperView extends LinearLayout {
         this.max = max;
         this.blankAllowed = blankAllowed;
         this.textValues = null;
-        if (blankAllowed && initial == 0) this.value = -1;
+        if (blankAllowed && (initial <= 0 || initial < min)) this.value = -1;
         else this.value = Math.max(min, Math.min(max, initial));
         refresh();
     }

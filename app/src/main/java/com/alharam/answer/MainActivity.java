@@ -85,25 +85,28 @@ public class MainActivity extends Activity implements ReplyController.Host {
         sharedUrl.setText(prefs.getString("url", ""));
         sharedCount.configure(1, 1000, prefs.getInt("count", 10), false, "عملية");
         sharedDelay.configure(1, 300, prefs.getInt("delay", 20), false, "ثانية");
-        sharedMinute.configure(0, 59, prefs.getInt("minuteValue", 0), true, "دقيقة");
-        sharedHour.configure(1, 12, prefs.getInt("hourValue", 0), true, "ساعة");
-        sharedAmpm.configureText(new String[]{"صباحًا", "مساءً"}, prefs.getInt("ampmValue", -1), true);
+        // وقت البدء يبدأ فارغاً دائماً ولا يُحفظ (الفراغ = البدء فوراً)
+        prefs.edit().remove("minuteValue").remove("hourValue").remove("ampmValue").apply();
+        sharedMinute.configure(0, 59, 0, true, "دقيقة");
+        sharedHour.configure(1, 12, 0, true, "ساعة");
+        sharedAmpm.configureText(new String[]{"صباحًا", "مساءً"}, -1, true);
         sharedOpen.setOnClickListener(v -> {
             saveSharedSettings();
             String u = sharedUrl.getText().toString().trim();
             if (u.isEmpty()) return;
-            if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://" + u;
-            web.loadUrl(u);
+            PostOpener.open(MainActivity.this, web, u);
         });
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (replyController != null) replyController.refreshServiceStatus();
     }
 
     void saveSharedSettings() {
         prefs.edit().putString("url", sharedUrl.getText().toString().trim())
             .putInt("count", Math.max(1, sharedCount.getNumericValue()))
-            .putInt("delay", Math.max(1, sharedDelay.getNumericValue()))
-            .putInt("minuteValue", sharedMinute.getNumericValue())
-            .putInt("hourValue", sharedHour.getNumericValue())
-            .putInt("ampmValue", sharedAmpm.getTextIndex()).apply();
+            .putInt("delay", Math.max(1, sharedDelay.getNumericValue())).apply();
     }
 
     String sharedStartTime() {

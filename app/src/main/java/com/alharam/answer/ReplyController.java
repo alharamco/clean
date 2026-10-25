@@ -12,7 +12,14 @@ import android.widget.EditText;
 import android.content.SharedPreferences;
 import org.json.JSONArray;
 import android.widget.TextView;
-import android.text.method.ScrollingMovementMethod;
+import android.widget.ScrollView;
+import android.widget.Toast;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.content.Intent;
+import android.net.Uri;
+import android.provider.Settings;
 import android.view.View;
 import android.view.MotionEvent;
 import java.util.HashSet;
@@ -23,7 +30,7 @@ import org.json.JSONTokener;
 class ReplyController {
     interface Host { void expandFacebook(String reason); void restoreFacebook(); void toggleFacebook(); void enterReplyFocusMode(); void exitReplyFocusMode(); void updateReplyLiveLog(String message); }
     final Activity activity; final View panel; final WebView web; final Host host;
-    TextView status, log, progress; EditText replyText, replyRules, replyFallback, replyDm, replyDmMax; CheckBox replyAll, replyDmEnable; String currentRules="", currentFallback=""; StepperView sharedCount, sharedDelay;
+    TextView status, log, progress; EditText replyText, replyRules, replyFallback, replyDm, replyDmMax; CheckBox replyAll, replyDmEnable; ScrollView logScroll; Button replyDmService, replyDmAppInfo, logCopy, logNewest, logOldest, logClear; TextView replyDmServiceStatus; boolean logFollow = true; String currentRules="", currentFallback=""; StepperView sharedCount, sharedDelay;
     Button startReply, stopReply, openPost;
     Handler handler = new Handler(); Runnable nextTask; boolean running=false;
     int completed=0,target=0,candidateIndex=0,scrollSearchAttempts=0;
@@ -36,7 +43,31 @@ class ReplyController {
         status=p.findViewById(R.id.reply_status); log=p.findViewById(R.id.reply_log); progress=p.findViewById(R.id.reply_progress);
         replyText=p.findViewById(R.id.replyText); replyRules=p.findViewById(R.id.replyRules); replyFallback=p.findViewById(R.id.replyFallback); replyAll=p.findViewById(R.id.replyAll); replyDm=p.findViewById(R.id.replyDm); replyDmEnable=p.findViewById(R.id.replyDmEnable); replyDmMax=p.findViewById(R.id.replyDmMax); loadReplySettings(); startReply=p.findViewById(R.id.reply_start); stopReply=p.findViewById(R.id.reply_stop);
         sharedCount=a.findViewById(R.id.shared_count); sharedDelay=a.findViewById(R.id.shared_delay);
-        log.setMovementMethod(new ScrollingMovementMethod());
+        logScroll=p.findViewById(R.id.reply_log_scroll); logCopy=p.findViewById(R.id.reply_log_copy); logNewest=p.findViewById(R.id.reply_log_newest); logOldest=p.findViewById(R.id.reply_log_oldest); logClear=p.findViewById(R.id.reply_log_clear);
+        replyDmService=p.findViewById(R.id.reply_dm_service); replyDmAppInfo=p.findViewById(R.id.reply_dm_appinfo); replyDmServiceStatus=p.findViewById(R.id.reply_dm_service_status);
+        log.setTextIsSelectable(true);
+        logScroll.setOnTouchListener((v, e) -> {
+            v.getParent().requestDisallowInterceptTouchEvent(true);
+            if (e.getAction() == MotionEvent.ACTION_UP || e.getAction() == MotionEvent.ACTION_CANCEL) logFollow = logScroll.getScrollY() < 30;
+            return false;
+        });
+        logCopy.setOnClickListener(v -> {
+            ClipboardManager cm = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null) { cm.setPrimaryClip(ClipData.newPlainText("سجل الردود", log.getText().toString())); Toast.makeText(activity, "تم نسخ السجل كاملاً", Toast.LENGTH_SHORT).show(); }
+        });
+        logNewest.setOnClickListener(v -> { logFollow = true; logScroll.post(() -> logScroll.fullScroll(View.FOCUS_UP)); });
+        logOldest.setOnClickListener(v -> { logFollow = false; logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN)); });
+        logClear.setOnClickListener(v -> { log.setText(""); logFollow = true; });
+        replyDmService.setOnClickListener(v -> {
+            Toast.makeText(activity, "ابحث عن «الهرم سمارت أكشن» ثم فعّل الخدمة", Toast.LENGTH_LONG).show();
+            activity.startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+        });
+        replyDmAppInfo.setOnClickListener(v -> {
+            Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + activity.getPackageName()));
+            activity.startActivity(i);
+            Toast.makeText(activity, "اضغط ⋮ ثم «السماح بالإعدادات المقيّدة» إن ظهر", Toast.LENGTH_LONG).show();
+        });
+        refreshServiceStatus();
         startReply.setOnClickListener(v->beginReplyRun()); stopReply.setOnClickListener(v->stopRun("تم إيقاف الردود"));
         updateProgress(); startCaptchaWatcher();
     }
@@ -110,7 +141,7 @@ class ReplyController {
     }
 
     void startReplyNow() {
-        running=true; completed=0; candidateIndex=0; scrollSearchAttempts=0; processedCandidateKeys.clear(); pendingDm=false; dmNavigated=false; dmSent=0; dmLimitLogged=false; unchangedStreak=0; dmDoneAuthors.clear();
+        running=true; completed=0; candidateIndex=0; scrollSearchAttempts=0; processedCandidateKeys.clear(); pendingDm=false; dmNavigated=false; dmSent=0; dmLimitLogged=false; dmServiceWarned=false; unchangedStreak=0; dmDoneAuthors.clear();
         currentCandidateKey=""; currentCandidateLabel=""; updateProgress();
         host.enterReplyFocusMode();
         appendLog("بدأ التشغيل — المطلوب: "+(target == Integer.MAX_VALUE ? "كل التعليقات" : String.valueOf(target))+" — الفاصل: "+(intervalMs/1000)+" ثانية"+(dmEnabled ? " — الرسائل الخاصة: مفعّلة (حد "+dmMax+")" : ""));
@@ -515,11 +546,13 @@ class ReplyController {
         "const containerOf=(reply,all)=>{let best=reply.parentElement||reply,p=best;while(p&&p.parentElement){const up=p.parentElement;if(up===document.body||up===document.documentElement)break;const n=all.filter(r=>up.contains(r)).length;if(n>1||norm(up.innerText).length>500||up.getBoundingClientRect().height>650)break;p=up;best=up;}return best;};" +
         "const actionRe=/^(like|reply|share|edit|react|translate|see translation|top fan|author|admin|just now|view .*|[0-9]+ repl.*|أعجبني|إعجاب|رد|الرد|مشاركة|تعديل|ترجمة|عرض .*|معجب.*|مشرف|المسؤول|الآن)$/i;" +
         "const timeRe=/^[0-9٠-٩]+\\s*\\S{0,8}$/;" +
+        "const reactRe=/^[^\\p{L}\\d]*(liked|loved|reacted|أعجب|تفاعل)/iu;" +
         "const info=(reply,all)=>{const c=containerOf(reply,all);const lines=(c.innerText||'').split('\\n').map(norm).filter(x=>x.length);if(!lines.length)return null;" +
         "const al=[...c.querySelectorAll('a[href],[role=link]')].find(a=>{const t=norm(a.innerText);return t.length>1&&t.length<60&&!actionRe.test(t)&&!timeRe.test(t)&&!isReply(a);});" +
         "const author=(al?norm(al.innerText):lines[0]).slice(0,60);" +
-        "const body=lines.filter(l=>l!==author&&!actionRe.test(l)&&!timeRe.test(l)).join(' ').replace(/(?:\\s+(?:like|reply|أعجبني|إعجاب|الرد|رد))+(?:\\s+[0-9٠-٩]+\\s*\\S{0,6})?\\s*$/i,'').slice(0,400);" +
-        "return {container:c,authorEl:al||null,author:author,text:body,key:strip(author)+'|'+strip(body).slice(0,60)};};";
+        "const nameEl=al||[...c.querySelectorAll('span,div,b,strong,h2,h3,h4')].filter(e=>norm(e.innerText)===author&&e.getBoundingClientRect().width>0).sort((x,y)=>{const a=x.getBoundingClientRect(),b=y.getBoundingClientRect();return a.width*a.height-b.width*b.height;})[0]||null;" +
+        "const body=lines.filter(l=>l!==author&&!actionRe.test(l)&&!timeRe.test(l)&&!reactRe.test(l)).join(' ').replace(/(?:\\s+(?:like|reply|أعجبني|إعجاب|الرد|رد))+(?:\\s+[0-9٠-٩]+\\s*\\S{0,6})?\\s*$/i,'').slice(0,400);" +
+        "return {container:c,authorEl:nameEl,author:author,text:body,key:strip(author)+'|'+strip(body).slice(0,60)};};";
 
     String findAndOpenReplyJs() {
         JSONArray done = new JSONArray();
@@ -551,47 +584,7 @@ class ReplyController {
         "const all=collect();let hit=null;for(const r of all){const i=info(r,all);if(i&&i.key===target){hit=i;break;}}" +
         "if(!hit||!hit.authorEl)return JSON.stringify({ok:false,message:'لم يتم العثور على رابط اسم العميل'});" +
         "hit.authorEl.scrollIntoView({block:'center',inline:'center',behavior:'auto'});const r=hit.authorEl.getBoundingClientRect();" +
-        "return JSON.stringify({ok:true,x:r.left+r.width/2,y:r.top+r.height/2,url:location.href});})()";
-    }
-
-    // زر المراسلة في صفحة العميل (عربي وإنجليزي)، مع تجاهل شريط فيسبوك العلوي حتى لا نفتح صندوق رسائلك.
-    String findMessageButtonJs() {
-        return "(()=>{const norm=s=>(s||'').replace(/\\s+/g,' ').trim().toLowerCase();" +
-        "const visible=e=>{const r=e.getBoundingClientRect(),st=getComputedStyle(e);return r.width>0&&r.height>0&&st.display!=='none'&&st.visibility!=='hidden';};" +
-        "const words=['message','send message','send a message','new message','message us','مراسلة','رسالة','رسالة جديدة','إرسال رسالة','ارسال رسالة','راسلني','مراسلته','مراسلتها'];" +
-        "const bad=e=>!!e.closest('[role=banner],header,[role=navigation],[role=complementary]');" +
-        "const els=[...document.querySelectorAll('a,button,[role=button],[role=link],div[tabindex],span')].filter(e=>visible(e)&&!bad(e));" +
-        "let best=null,score=-1;for(const e of els){const t=norm(e.innerText),a=norm(e.getAttribute('aria-label'));let s=0;if(words.includes(t))s=3;else if(words.includes(a))s=2;else continue;" +
-        "if(e.tagName==='SPAN'&&!e.closest('a,button,[role=button],[role=link],[tabindex]'))continue;if(s>score){score=s;best=e;}}" +
-        "if(!best)return JSON.stringify({ok:false,message:'لا يوجد زر مراسلة'});" +
-        "best.scrollIntoView({block:'center',inline:'center',behavior:'auto'});const r=best.getBoundingClientRect();" +
-        "return JSON.stringify({ok:true,x:r.left+r.width/2,y:r.top+r.height/2,label:norm(best.innerText||best.getAttribute('aria-label'))});})()";
-    }
-
-    // كتابة الرسالة الخاصة وإرسالها (زر الإرسال أو Enter)
-    String fillAndSendDmJs(String text) {
-        String q = JSONObject.quote(text);
-        return "(()=>{const text=" + q + ";const norm=s=>(s||'').replace(/\\s+/g,' ').trim().toLowerCase();" +
-        "const visible=e=>{const r=e.getBoundingClientRect(),st=getComputedStyle(e);return r.width>0&&r.height>0&&st.display!=='none'&&st.visibility!=='hidden';};" +
-        "const bad=e=>!!e.closest('[role=banner],header,[role=navigation]');" +
-        "const boxes=[...document.querySelectorAll('textarea,[contenteditable=true],[role=textbox]')].filter(e=>visible(e)&&!bad(e));" +
-        "const hint=e=>{const s=norm((e.getAttribute('aria-label')||'')+' '+(e.getAttribute('placeholder')||'')+' '+(e.getAttribute('data-placeholder')||''));return /message|رسالة|aa|اكتب/.test(s);};" +
-        "let box=boxes.find(hint)||boxes[boxes.length-1];" +
-        "if(!box)return JSON.stringify({ok:false,message:'لم تظهر خانة كتابة الرسالة'});" +
-        "box.scrollIntoView({block:'center',inline:'center'});box.focus();" +
-        "if(box.tagName==='TEXTAREA'){const p=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value');if(p&&p.set)p.set.call(box,text);else box.value=text;}else{const r=document.createRange();r.selectNodeContents(box);r.deleteContents();r.insertNode(document.createTextNode(text));}" +
-        "box.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));box.dispatchEvent(new Event('change',{bubbles:true}));" +
-        "const scope=box.closest('form,[role=dialog],[aria-modal=true]')||box.parentElement?.parentElement?.parentElement||document;" +
-        "const send=[...scope.querySelectorAll('button,[role=button],[aria-label]')].filter(visible).find(e=>{const t=norm(e.innerText),a=norm(e.getAttribute('aria-label'));return ['send','إرسال','ارسال','press enter to send','send message'].some(x=>t===x||a===x);});" +
-        "if(send){send.click();return JSON.stringify({ok:true,via:'button'});}" +
-        "for(const t of ['keydown','keypress','keyup']){box.dispatchEvent(new KeyboardEvent(t,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));}" +
-        "return JSON.stringify({ok:true,via:'enter'});})()";
-    }
-
-    String dmStillTypedJs(String text) {
-        String q = JSONObject.quote(text.length() > 12 ? text.substring(0, 12) : text);
-        return "(()=>{const t=" + q + ";const b=[...document.querySelectorAll('textarea,[contenteditable=true],[role=textbox]')].find(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;});" +
-        "return JSON.stringify({still:!!b&&(((b.value||b.innerText||'')+'').includes(t))});})()";
+        "const a=hit.authorEl.closest('a[href]');return JSON.stringify({ok:true,x:r.left+r.width/2,y:r.top+r.height/2,url:location.href,href:a?a.href:''});})()";
     }
 
     String scrollCommentsListJs() {
@@ -673,10 +666,11 @@ class ReplyController {
         "return JSON.stringify({ok:true,message:'تمت كتابة الرد في خانة Reply والضغط على زر الإرسال'});})()";
     }
 
-    // ===== الرسالة الخاصة بعد الرد العام =====
-    boolean pendingDm = false, dmNavigated = false, dmEnabled = false, dmLimitLogged = false;
+    // ===== الرسالة الخاصة عبر ماسنجر (خدمة إمكانية الوصول) =====
+    boolean pendingDm = false, dmNavigated = false, dmEnabled = false, dmLimitLogged = false, dmServiceWarned = false;
     int dmSent = 0, dmMax = 20, dmBackTries = 0, unchangedStreak = 0;
     String currentDmText = "", dmReturnUrl = "";
+    Runnable dmWatch = null;
     final Set<String> dmDoneAuthors = new HashSet<>();
     final java.util.Random rnd = new java.util.Random();
 
@@ -704,6 +698,12 @@ class ReplyController {
         processNextComment();
     }
 
+    void refreshServiceStatus() {
+        if (replyDmServiceStatus == null) return;
+        boolean on = DmBridge.serviceEnabled(activity);
+        replyDmServiceStatus.setText(on ? "خدمة الرسائل: مفعّلة ✓" : "خدمة الرسائل: غير مفعّلة — اضغط الزر أعلاه لتفعيلها");
+    }
+
     void startDm() {
         final String author = currentCandidateLabel == null ? "" : currentCandidateLabel.trim();
         final String key = currentCandidateKey;
@@ -711,8 +711,12 @@ class ReplyController {
             appendLog("تخطي الرسالة الخاصة — لا يوجد اسم للعميل أو سبقت مراسلته");
             dmAfter(500); return;
         }
+        if (!DmBridge.serviceEnabled(activity) || !DmBridge.serviceConnected()) {
+            if (!dmServiceWarned) { dmServiceWarned = true; appendLog("خدمة الرسائل غير مفعّلة — فعّلها من زر «تفعيل خدمة الرسائل». سيكمل الردود العامة فقط"); }
+            dmEnabled = false; dmAfter(300); return;
+        }
         dmNavigated = false;
-        setStatus("جاري فتح صفحة " + author + " للمراسلة");
+        setStatus("جاري تجهيز الرسالة الخاصة لـ " + author);
         web.evaluateJavascript(findAuthorLinkJs(key), v -> {
             if (!running) return;
             try {
@@ -720,17 +724,24 @@ class ReplyController {
                 if (!o.optBoolean("ok", false)) { dmSkip(author, o.optString("message", "تعذر الوصول لاسم العميل")); return; }
                 dmReturnUrl = o.optString("url", "");
                 if (dmReturnUrl.length() == 0) { dmSkip(author, "تعذر قراءة رابط الصفحة الحالي"); return; }
+                String href = o.optString("href", "");
+                String target = PostLinkHelper.profileTarget(href);
+                if (target.length() > 0) {
+                    appendLog("رابط العميل: " + href);
+                    handler.postDelayed(() -> launchMessenger(author, target), 300);
+                    return;
+                }
+                // لا يوجد رابط ظاهر: نضغط على الاسم لفتح صفحته ثم نقرأ رابطها
                 handler.postDelayed(() -> {
                     if (!running) return;
                     if (!nativeTapWebView(o.optDouble("x", -1), o.optDouble("y", -1))) { dmSkip(author, "تعذر الضغط على اسم العميل"); return; }
                     handler.postDelayed(() -> dmCheckProfile(author, 0), 3200);
                 }, 400);
-            } catch (Exception e) { dmSkip(author, "نتيجة غير مفهومة أثناء فتح صفحة العميل"); }
+            } catch (Exception e) { dmSkip(author, "نتيجة غير مفهومة أثناء تحديد العميل"); }
         });
     }
 
-    // نتأكد أن الرابط تغيّر فعلاً (أي فُتحت صفحة العميل) قبل البحث عن زر المراسلة،
-    // حتى لا نضغط بالخطأ على زر "إرسال رسالة" الخاص بصفحة المنشور نفسها.
+    // نتأكد أن الرابط تغيّر فعلاً (فُتحت صفحة العميل) ثم نستخرج معرّف حسابه.
     void dmCheckProfile(final String author, final int attempt) {
         if (!running) return;
         web.evaluateJavascript("location.href", v -> {
@@ -743,71 +754,64 @@ class ReplyController {
             }
             dmNavigated = true;
             appendLog("فُتحت صفحة: " + url);
-            dmFindMessage(author, 0);
+            String target = PostLinkHelper.profileTarget(url);
+            if (target.length() == 0) { dmSkip(author, "تعذر استخراج معرّف حساب العميل من الرابط"); return; }
+            launchMessenger(author, target);
         });
     }
 
-    void dmFindMessage(final String author, final int attempt) {
-        if (!running) return;
-        web.evaluateJavascript(findMessageButtonJs(), v -> {
-            if (!running) return;
-            try {
-                JSONObject o = new JSONObject(unquote(v));
-                if (o.optBoolean("ok", false)) {
-                    final double x = o.optDouble("x", -1), y = o.optDouble("y", -1);
-                    appendLog("وُجد زر المراسلة: " + o.optString("label", ""));
-                    handler.postDelayed(() -> {
-                        if (!running) return;
-                        if (!nativeTapWebView(x, y)) { dmSkip(author, "تعذر الضغط على زر المراسلة"); return; }
-                        handler.postDelayed(() -> dmType(author, 0), 3500);
-                    }, 400);
-                    return;
-                }
-            } catch (Exception ignored) {}
-            if (attempt < 2) handler.postDelayed(() -> dmFindMessage(author, attempt + 1), 1500);
-            else dmSkip(author, "لا يوجد زر مراسلة في صفحته");
-        });
-    }
-
-    void dmType(final String author, final int attempt) {
+    void launchMessenger(final String author, final String target) {
         if (!running) return;
         String first = author.trim().length() > 0 ? author.trim().split("\\s+")[0] : "";
         final String text = fillName(currentDmText, first);
-        web.evaluateJavascript(fillAndSendDmJs(text), v -> {
-            if (!running) return;
-            try {
-                JSONObject o = new JSONObject(unquote(v));
-                if (o.optBoolean("ok", false)) { handler.postDelayed(() -> dmVerify(author, text), 1600); return; }
-            } catch (Exception ignored) {}
-            if (attempt < 3) handler.postDelayed(() -> dmType(author, attempt + 1), 1500);
-            else dmSkip(author, "لم تظهر خانة الرسالة (قد يفتح فيسبوك تطبيق ماسنجر خارج التطبيق)");
-        });
+        boolean started = DmBridge.begin(text, (ok, reason, dump) -> onDmResult(author, ok, reason, dump));
+        if (!started) { dmSkip(author, "خدمة الرسائل غير متصلة"); return; }
+        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("https://m.me/" + target));
+        i.setPackage("com.facebook.orca");
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            activity.startActivity(i);
+            appendLog("فتح محادثة " + author + " في ماسنجر");
+        } catch (Exception e) {
+            DmBridge.cancel();
+            dmSkip(author, "تعذر فتح ماسنجر (هل هو مثبت؟)");
+            return;
+        }
+        if (dmWatch != null) handler.removeCallbacks(dmWatch);
+        dmWatch = () -> {
+            if (!running || !DmBridge.active) return;
+            DmBridge.cancel();
+            appendLog("انتهت مهلة الرسالة الخاصة لـ " + author);
+            dmClose(false);
+        };
+        handler.postDelayed(dmWatch, 80000);
     }
 
-    void dmVerify(final String author, final String text) {
+    void onDmResult(String author, boolean ok, String reason, String dump) {
+        if (dmWatch != null) handler.removeCallbacks(dmWatch);
         if (!running) return;
-        web.evaluateJavascript(dmStillTypedJs(text), v -> {
-            if (!running) return;
-            boolean still = unquote(v).contains("\"still\":true");
-            if (still) { dmSkip(author, "كُتبت الرسالة ولم تُرسل"); return; }
+        if (ok) {
             dmSent++; dmDoneAuthors.add(author.toLowerCase());
-            appendLog("تم إرسال رسالة خاصة إلى " + author + " — رقم " + dmSent);
-            dmClose(true);
-        });
+            appendLog("تم إرسال رسالة خاصة إلى " + author + " — رقم " + dmSent + (reason != null && reason.length() > 0 ? " (" + reason + ")" : ""));
+        } else {
+            appendLog("فشلت الرسالة الخاصة لـ " + author + " — " + reason);
+            if (dump != null && dump.length() > 0) appendLog("[تشخيص ماسنجر] " + dump);
+        }
+        dmClose(ok);
     }
 
     void dmSkip(String author, String reason) {
         appendLog("تخطي الرسالة الخاصة لـ " + author + " — " + reason);
-        if (dmNavigated) dmClose(false); else dmAfter(600);
+        dmClose(false);
     }
 
     void dmClose(final boolean sent) {
         dmBackTries = 0;
+        if (!dmNavigated) { dmAfter(sent ? intervalMs + rnd.nextInt(4000) : 800); return; }
         handler.postDelayed(() -> dmGoBack(sent), 1200);
     }
 
-    // الرجوع إلى صفحة التعليقات بنفس رابطها، مع محاولة الرجوع للخلف أولاً (يحافظ على القائمة)،
-    // ثم إعادة تحميل الرابط كحل أخير.
+    // الرجوع إلى صفحة التعليقات بنفس رابطها (رجوع للخلف أولاً، ثم إعادة تحميل كحل أخير).
     void dmGoBack(final boolean sent) {
         if (!running) return;
         web.evaluateJavascript("location.href", v -> {
@@ -815,8 +819,7 @@ class ReplyController {
             String url = unquote(v);
             if (pathOnly(url).equals(pathOnly(dmReturnUrl))) {
                 dmNavigated = false;
-                long extra = sent ? intervalMs + rnd.nextInt(4000) : 800;
-                dmAfter(extra);
+                dmAfter(sent ? intervalMs + rnd.nextInt(4000) : 800);
                 return;
             }
             if (dmBackTries < 5) {
@@ -846,8 +849,11 @@ class ReplyController {
 
     void setStatus(String s) { status.setText(s); }
     void appendLog(String s) {
-        log.setText(s + (log.length()==0 ? "" : "\n" + log.getText().toString()));
-        log.post(() -> log.scrollTo(0,0));
+        String prev = log.getText().toString();
+        String next = s + (prev.length() == 0 ? "" : "\n" + prev);
+        if (next.length() > 150000) next = next.substring(0, 150000);
+        log.setText(next);
+        if (logFollow) logScroll.post(() -> logScroll.scrollTo(0, 0));
         host.updateReplyLiveLog(s);
     }
     void updateProgress() { progress.setText("الردود: " + completed + " / " + (target == Integer.MAX_VALUE ? "كل التعليقات" : String.valueOf(target))); }

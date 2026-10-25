@@ -2,4 +2,5 @@
     <string name="app_name">الهرم سمارت أكشن لفيسبوك</string>
     <string name="app_tagline">رد • إعجاب • دعوة</string>
     <string name="app_header">الهرم سمارت أكشن</string>
+    <string name="accessibility_description">تتيح للتطبيق كتابة الرسالة الخاصة وإرسالها داخل تطبيق ماسنجر بعد الرد على التعليق. لا تقرأ الخدمة شيئاً إلا أثناء إرسال رسالة.</string>
 </resources>
